@@ -1,0 +1,65 @@
+{{- if .Values.kong.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "thmnayah.fullname" . }}-kong
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "thmnayah.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kong
+spec:
+  replicas: {{ .Values.kong.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "thmnayah.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: kong
+  template:
+    metadata:
+      labels:
+        {{- include "thmnayah.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: kong
+    spec:
+      containers:
+      - name: kong
+        image: {{ .Values.kong.image.repository }}:{{ .Values.kong.image.tag }}
+        ports:
+        - containerPort: 8000
+          name: proxy
+        - containerPort: 8001
+          name: admin
+        env:
+        {{- range $key, $value := .Values.kong.env }}
+        - name: KONG_{{ $key | upper }}
+          value: {{ $value | quote }}
+        {{- end }}
+        - name: KONG_DECLARATIVE_CONFIG
+          value: "/etc/kong/kong.yml"
+        volumeMounts:
+        - name: kong-config
+          mountPath: /etc/kong
+      volumes:
+      - name: kong-config
+        configMap:
+          name: {{ include "thmnayah.fullname" . }}-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong-service
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "thmnayah.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kong
+spec:
+  selector:
+    {{- include "thmnayah.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: kong
+  ports:
+  - name: proxy
+    port: 8000
+    targetPort: 8000
+  - name: admin
+    port: 8001
+    targetPort: 8001
+{{- end }}

@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: cms_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cms_db}
+      POSTGRES_USER: ${POSTGRES_USER:-cms_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cms_password}
+      POSTGRES_HOST_AUTH_METHOD: ${POSTGRES_HOST_AUTH_METHOD:-md5}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - cms_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cms_user} -d ${POSTGRES_DB:-cms_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis for caching and session storage
+  redis:
+    image: redis:7-alpine
+    container_name: cms_redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password}
+    volumes:
+      - redis_data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - cms_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # MailHog for email testing in development
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: cms_mailhog
+    ports:
+      - "${MAILHOG_WEB_PORT:-8025}:8025"  # Web interface
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"  # SMTP server
+    networks:
+      - cms_network
+    restart: unless-stopped
+
+  # Adminer for database management
+  adminer:
+    image: adminer:4-standalone
+    container_name: cms_adminer
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: dracula
+    ports:
+      - "${ADMINER_PORT:-8080}:8080"
+    networks:
+      - cms_network
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  # Redis Commander for Redis management
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: cms_redis_commander
+    environment:
+      REDIS_HOSTS: local:redis:6379:0:${REDIS_PASSWORD:-redis_password}
+      HTTP_USER: ${REDIS_COMMANDER_USER:-admin}
+      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-admin}
+    ports:
+      - "${REDIS_COMMANDER_PORT:-8081}:8081"
+    networks:
+      - cms_network
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+# Named volumes for data persistence
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  media_data:
+    driver: local
+  logs_data:
+    driver: local
+
+# Networks
+networks:
+  cms_network:
+    driver: bridge
+    name: cms_network
