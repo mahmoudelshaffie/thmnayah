@@ -1,0 +1,150 @@
+global:
+  namespace: thmnayah
+  storageClass: local-storage
+
+# Sample Hello API Service
+helloApi:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: python
+    tag: "3.11-slim"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+# Infrastructure Components
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "password123"
+    database: "thmnayah"
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: local-storage
+
+redis:
+  enabled: true
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 5Gi
+      storageClass: local-storage
+
+mongodb:
+  enabled: true
+  auth:
+    enabled: true
+    rootUser: admin
+    rootPassword: "password123"
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: local-storage
+
+minio:
+  enabled: true
+  auth:
+    rootUser: minioadmin
+    rootPassword: miniopassword
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: local-storage
+
+keycloak:
+  enabled: true
+  auth:
+    adminUser: admin
+    adminPassword: password123
+  postgresql:
+    enabled: false
+  externalDatabase:
+    host: thmnayah-postgresql
+    port: 5432
+    user: postgres
+    database: thmnayah
+    password: password123
+
+kong:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: kong
+    tag: "3.4"
+  env:
+    database: "off"
+    declarative_config: /etc/kong/kong.yml
+
+nats:
+  enabled: true
+  replicaCount: 1
+  nats:
+    jetstream:
+      enabled: true
+
+vault:
+  enabled: true
+  server:
+    dev:
+      enabled: true
+    dataStorage:
+      enabled: false
+
+monitoring:
+  prometheus:
+    enabled: true
+    server:
+      persistentVolume:
+        enabled: false
+  grafana:
+    enabled: true
+    adminUser: admin
+    adminPassword: password123
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  hosts:
+    - host: thmnayah.local
+      paths:
+        - path: /api/hello
+          pathType: Prefix
+          service: hello-api-service
+          port: 8000
+        - path: /api/cms
+          pathType: Prefix
+          service: cms-service
+          port: 8001
+        - path: /api/discovery
+          pathType: Prefix
+          service: discovery-service
+          port: 8002
+        - path: /auth
+          pathType: Prefix
+          service: keycloak-service
+          port: 8080
+        - path: /minio
+          pathType: Prefix
+          service: minio-service
+          port: 9001
+        - path: /grafana
+          pathType: Prefix
+          service: grafana-service
+          port: 3000

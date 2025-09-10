@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "thmnayah.fullname" . }}-config
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "thmnayah.labels" . | nindent 4 }}
+data:
+  # Hello API Configuration
+  app.py: |
+    from flask import Flask, jsonify
+    import os
+    import datetime
+    
+    app = Flask(__name__)
+    
+    @app.route('/health', methods=['GET'])
+    def health_check():
+        return jsonify({
+            'status': 'healthy',
+            'timestamp': datetime.datetime.utcnow().isoformat(),
+            'service': 'hello-api'
+        })
+    
+    @app.route('/api/hello', methods=['GET'])
+    def hello():
+        return jsonify({
+            'message': 'Hello from Thmnayah! مرحبا من ثمانية!',
+            'service': 'hello-api',
+            'version': '1.0.0',
+            'timestamp': datetime.datetime.utcnow().isoformat(),
+            'environment': os.getenv('ENVIRONMENT', 'development')
+        })
+    
+    @app.route('/api/hello/ar', methods=['GET'])
+    def hello_arabic():
+        return jsonify({
+            'message': 'مرحبا بك في منصة ثمانية لإدارة المحتوى!',
+            'service': 'hello-api',
+            'language': 'Arabic',
+            'timestamp': datetime.datetime.utcnow().isoformat()
+        })
+    
+    @app.route('/api/hello/en', methods=['GET'])
+    def hello_english():
+        return jsonify({
+            'message': 'Welcome to Thmnayah Content Management Platform!',
+            'service': 'hello-api', 
+            'language': 'English',
+            'timestamp': datetime.datetime.utcnow().isoformat()
+        })
+    
+    if __name__ == '__main__':
+        app.run(host='0.0.0.0', port=8000, debug=True)
+
+  requirements.txt: |
+    Flask==2.3.3
+    gunicorn==21.2.0
+
+  # Kong Configuration
+  kong.yml: |
+    _format_version: "3.0"
+    _transform: true
+    
+    services:
+    - name: hello-api-service
+      url: http://hello-api-service:8000
+      routes:
+      - name: hello-route
+        paths:
+        - /api/hello
+        methods:
+        - GET
+        plugins:
+        - name: rate-limiting
+          config:
+            minute: 100
+            hour: 1000
+    
+    - name: cms-service
+      url: http://cms-service:8001
+      routes:
+      - name: cms-route
+        paths:
+        - /api/cms
+        plugins:
+        - name: key-auth
+          config:
+            key_names:
+            - apikey
+    
+    - name: discovery-service
+      url: http://discovery-service:8002
+      routes:
+      - name: discovery-route
+        paths:
+        - /api/discovery
