@@ -1,0 +1,275 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database with production settings
+  postgres:
+    image: postgres:16-alpine
+    container_name: cms_postgres_prod
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST_AUTH_METHOD: md5
+      # Production PostgreSQL settings
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    networks:
+      - cms_prod_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: always
+    # Production resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis with production configuration
+  redis:
+    image: redis:7-alpine
+    container_name: cms_redis_prod
+    command: redis-server /usr/local/etc/redis/redis.conf
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - redis_prod_data:/data
+      - ./redis/redis-prod.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - cms_prod_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # CMS Application - Production
+  cms_app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: production
+    container_name: cms_app_prod
+    environment:
+      # Database Configuration
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      
+      # Redis Configuration
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      
+      # Application Configuration
+      ENVIRONMENT: production
+      DEBUG: false
+      API_V1_STR: "/api/v1"
+      PROJECT_NAME: ${PROJECT_NAME:-"CMS API"}
+      PROJECT_VERSION: ${PROJECT_VERSION:-"1.0.0"}
+      
+      # Security Configuration
+      SECRET_KEY: ${SECRET_KEY}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      
+      # CORS Configuration
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      
+      # File Upload Configuration
+      UPLOAD_DIR: /app/media
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-52428800}  # 50MB
+      
+      # Logging Configuration
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FILE: /app/logs/cms.log
+      SENTRY_DSN: ${SENTRY_DSN:-}  # Error tracking
+      
+      # Category Configuration
+      MAX_CATEGORY_DEPTH: ${MAX_CATEGORY_DEPTH:-5}
+      DEFAULT_CATEGORY_LANGUAGE: ${DEFAULT_CATEGORY_LANGUAGE:-ar}
+      
+      # Email Configuration
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_TLS: ${SMTP_TLS:-true}
+      EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL}
+      EMAILS_FROM_NAME: ${EMAILS_FROM_NAME:-"CMS System"}
+      
+      # Performance Configuration
+      WORKERS_PER_CORE: ${WORKERS_PER_CORE:-1}
+      MAX_WORKERS: ${MAX_WORKERS:-4}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
+      
+    volumes:
+      - media_prod_data:/app/media
+      - logs_prod_data:/app/logs
+      - static_prod_data:/app/static
+    networks:
+      - cms_prod_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      replicas: 2  # Run multiple instances
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Nginx Reverse Proxy and Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: cms_nginx_prod
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - static_prod_data:/app/static:ro
+      - media_prod_data:/app/media:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - cms_prod_network
+    depends_on:
+      - cms_app
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Backup Service
+  backup:
+    image: postgres:16-alpine
+    container_name: cms_backup
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data:ro
+      - backup_data:/backup
+      - ./scripts/backup.sh:/backup.sh:ro
+    command: |
+      sh -c 'while true; do
+        sleep 86400  # Daily backup
+        /backup.sh
+      done'
+    networks:
+      - cms_prod_network
+    depends_on:
+      - postgres
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+# Named volumes for production data persistence
+volumes:
+  postgres_prod_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${DATA_PATH:-./data}/postgres
+      o: bind
+  redis_prod_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${DATA_PATH:-./data}/redis
+      o: bind
+  media_prod_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${DATA_PATH:-./data}/media
+      o: bind
+  logs_prod_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${DATA_PATH:-./data}/logs
+      o: bind
+  static_prod_data:
+    driver: local
+  backup_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${BACKUP_PATH:-./backups}
+      o: bind
+
+# Production network with custom subnet
+networks:
+  cms_prod_network:
+    driver: bridge
+    name: cms_prod_network
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
